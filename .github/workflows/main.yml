@@ -334,15 +334,15 @@ jobs:
               fun getAiBriefingSpeech(): String {
                   val lastFuel = fuelLogs.firstOrNull()
                   val lastFuelSummary = if (lastFuel != null) {
-                      "Last refill was ${lastFuel.amountMad.toInt()} Dirhams at ${lastFuel.station}, giving${String.format(Locale.US, "%.1f", lastFuel.liters)} liters."
+                      "Last refill was ${lastFuel.amountMad.toInt()} Dirhams at ${lastFuel.station}, giving ${String.format(Locale.US, "%.1f", lastFuel.liters)} liters."
                   } else {
                       "No recent fuel logs."
                   }
                   return "AutoMaroc AI Co-Pilot Briefing. Position: $currentCity. " +
-                         "Weather is $currentTempC degrees Celsius,$weatherCondition. " +
-                         "Current speed $currentSpeedKmh kilometers per hour, limit is$speedLimitKmh. " +
+                         "Weather is $currentTempC degrees Celsius, $weatherCondition. " +
+                         "Current speed $currentSpeedKmh kilometers per hour, limit is $speedLimitKmh. " +
                          "Alert: $upcomingRoadEvent. " +
-                         "$lastFuelSummary Your Jawaz toll balance is${jawazBalanceMad.toInt()} Dirhams. Drive safely!"
+                         "$lastFuelSummary Your Jawaz toll balance is ${jawazBalanceMad.toInt()} Dirhams. Drive safely!"
               }
 
               private fun saveToPreferences(context: Context) {
@@ -406,4 +406,425 @@ jobs:
               }
 
               override fun onInit(status: Int) {
-                  if (status == TextToSpeech.
+                  if (status == TextToSpeech.SUCCESS) {
+                      tts?.language = Locale.US
+                      isTtsReady = true
+                  }
+              }
+
+              private fun speakAiBriefing() {
+                  val speech = FuelExpenseRepository.getAiBriefingSpeech()
+                  CarToast.makeText(carContext, "AI Co-Pilot Speaking Road & Fuel Briefing...", CarToast.LENGTH_LONG).show()
+                  if (isTtsReady) {
+                      tts?.speak(speech, TextToSpeech.QUEUE_FLUSH, null, "AI_BRIEFING")
+                  }
+              }
+
+              override fun onGetTemplate(): Template {
+                  val repo = FuelExpenseRepository
+                  val price = repo.currentPricePerLiter()
+
+                  val liters100 = String.format(Locale.US, "%.2f L", repo.convertMadToLiters(100.0))
+                  val liters200 = String.format(Locale.US, "%.2f L", repo.convertMadToLiters(200.0))
+                  val liters300 = String.format(Locale.US, "%.2f L", repo.convertMadToLiters(300.0))
+                  val liters500 = String.format(Locale.US, "%.2f L", repo.convertMadToLiters(500.0))
+
+                  val listBuilder = ItemList.Builder()
+                      .addItem(
+                          Row.Builder()
+                              .setTitle("GPS: ${repo.currentCity} (${repo.currentTempC} C)")
+                              .addText("${repo.weatherCondition} | Speed: ${repo.currentSpeedKmh}/${repo.speedLimitKmh} km/h")
+                              .build()
+                      )
+                      .addItem(
+                          Row.Builder()
+                              .setTitle("AI Traffic & Radar Assist (Tap to Speak)")
+                              .addText(repo.upcomingRoadEvent)
+                              .setOnClickListener { speakAiBriefing() }
+                              .build()
+                      )
+                      .addItem(
+                          Row.Builder()
+                              .setTitle("Station: ${repo.selectedStation} (${repo.selectedFuelType} @ $price DH/L)")
+                              .addText("Tap to switch Moroccan station (Afriquia, Shell, Total, Winxo)")
+                              .setOnClickListener {
+                                  repo.cycleStation()
+                                  CarToast.makeText(
+                                      carContext,
+                                      "Station: ${repo.selectedStation} (${repo.currentPricePerLiter()} DH/L)",
+                                      CarToast.LENGTH_SHORT
+                                  ).show()
+                                  invalidate()
+                              }
+                              .build()
+                      )
+                      .addItem(
+                          Row.Builder()
+                              .setTitle("+ Log 100 DH Refill -> $liters100")
+                              .addText("Adds ~${repo.estimatedRangeAddedKm(repo.convertMadToLiters(100.0))} km range")
+                              .setOnClickListener { logRefillOnCar(100.0) }
+                              .build()
+                      )
+                      .addItem(
+                          Row.Builder()
+                              .setTitle("+ Log 200 DH Refill -> $liters200")
+                              .addText("Adds ~${repo.estimatedRangeAddedKm(repo.convertMadToLiters(200.0))} km range")
+                              .setOnClickListener { logRefillOnCar(200.0) }
+                              .build()
+                      )
+                      .addItem(
+                          Row.Builder()
+                              .setTitle("+ Log 300 DH Refill -> $liters300")
+                              .addText("Adds ~${repo.estimatedRangeAddedKm(repo.convertMadToLiters(300.0))} km range")
+                              .setOnClickListener { logRefillOnCar(300.0) }
+                              .build()
+                      )
+                      .addItem(
+                          Row.Builder()
+                              .setTitle("+ Log 500 DH Plein -> $liters500")
+                              .addText("Adds ~${repo.estimatedRangeAddedKm(repo.convertMadToLiters(500.0))} km range")
+                              .setOnClickListener { logRefillOnCar(500.0) }
+                              .build()
+                      )
+                      .addItem(
+                          Row.Builder()
+                              .setTitle("Log Jawaz Toll (-25 DH) • Balance: ${repo.jawazBalanceMad.toInt()} DH")
+                              .addText("1-Tap Autoroute du Maroc Peage deduction")
+                              .setOnClickListener {
+                                  repo.logExpense(carContext, "Peage Jawaz", 25.0, "Autoroute Peage")
+                                  CarToast.makeText(
+                                      carContext,
+                                      "Logged 25 DH Jawaz Toll. Remaining: ${repo.jawazBalanceMad.toInt()} DH",
+                                      CarToast.LENGTH_SHORT
+                                  ).show()
+                                  invalidate()
+                              }
+                              .build()
+                      )
+                      .addItem(
+                          Row.Builder()
+                              .setTitle("View Recent Fuel & Expense History")
+                              .addText("Last Refill: ${repo.fuelLogs.firstOrNull()?.amountMad?.toInt() ?: 0} DH (${String.format(Locale.US, "%.1f", repo.fuelLogs.firstOrNull()?.liters ?: 0.0)} L)")
+                              .setOnClickListener {
+                                  screenManager.push(AutoMarocHistoryScreen(carContext))
+                              }
+                              .build()
+                      )
+
+                  return ListTemplate.Builder()
+                      .setSingleList(listBuilder.build())
+                      .setTitle("AutoMaroc Pro • MAD to Liters & AI")
+                      .setHeaderAction(Action.APP_ICON)
+                      .setActionStrip(
+                          ActionStrip.Builder()
+                              .addAction(
+                                  Action.Builder()
+                                      .setTitle("AI Speak")
+                                      .setOnClickListener { speakAiBriefing() }
+                                      .build()
+                              )
+                              .addAction(
+                                  Action.Builder()
+                                      .setTitle(repo.selectedFuelType)
+                                      .setOnClickListener {
+                                          repo.toggleFuelType()
+                                          CarToast.makeText(
+                                              carContext,
+                                              "Switched to ${repo.selectedFuelType} (${repo.currentPricePerLiter()} DH/L)",
+                                              CarToast.LENGTH_SHORT
+                                          ).show()
+                                          invalidate()
+                                      }
+                                      .build()
+                              )
+                              .build()
+                      )
+                      .build()
+              }
+
+              private fun logRefillOnCar(amountMad: Double) {
+                  val entry = FuelExpenseRepository.logQuickRefill(carContext, amountMad)
+                  val formattedLiters = String.format(Locale.US, "%.2f", entry.liters)
+                  CarToast.makeText(
+                      carContext,
+                      "Logged ${amountMad.toInt()} DH = $formattedLiters L (${entry.station})",
+                      CarToast.LENGTH_LONG
+                  ).show()
+                  invalidate()
+              }
+          }
+
+          class AutoMarocHistoryScreen(carContext: CarContext) : Screen(carContext) {
+              override fun onGetTemplate(): Template {
+                  val listBuilder = ItemList.Builder()
+                  FuelExpenseRepository.fuelLogs.take(5).forEach { log ->
+                      listBuilder.addItem(
+                          Row.Builder()
+                              .setTitle("${log.amountMad.toInt()} DH -> ${String.format(Locale.US, "%.2f", log.liters)} L (${log.station})")
+                              .addText("${log.timestamp} • ${log.fuelType} @ ${log.pricePerLiterMad} DH/L • Odo: ${log.odometerKm} km")
+                              .build()
+                      )
+                  }
+                  FuelExpenseRepository.expenseLogs.take(3).forEach { exp ->
+                      listBuilder.addItem(
+                          Row.Builder()
+                              .setTitle("${exp.category}: ${exp.amountMad.toInt()} DH")
+                              .addText("${exp.timestamp} • ${exp.note}")
+                              .build()
+                      )
+                  }
+
+                  return ListTemplate.Builder()
+                      .setTitle("Fuel & Expense History (MAD & Liters)")
+                      .setHeaderAction(Action.BACK)
+                      .setSingleList(listBuilder.build())
+                      .build()
+              }
+          }
+          ''',
+
+              "app/src/main/java/ma/automaroc/pro/MainActivity.kt": '''package ma.automaroc.pro
+
+          import android.Manifest
+          import android.annotation.SuppressLint
+          import android.content.pm.PackageManager
+          import android.location.Location
+          import android.os.Build
+          import android.os.Bundle
+          import android.speech.tts.TextToSpeech
+          import android.widget.Button
+          import android.widget.EditText
+          import android.widget.LinearLayout
+          import android.widget.ScrollView
+          import android.widget.TextView
+          import android.widget.Toast
+          import androidx.appcompat.app.AppCompatActivity
+          import androidx.core.app.ActivityCompat
+          import androidx.core.content.ContextCompat
+          import com.google.android.gms.location.LocationServices
+          import ma.automaroc.pro.data.FuelExpenseRepository
+          import java.util.Locale
+
+          class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
+
+              private lateinit var statusText: TextView
+              private lateinit var conversionPreviewText: TextView
+              private lateinit var historyText: TextView
+              private var tts: TextToSpeech? = null
+
+              private val requiredPermissions = mutableListOf(
+                  Manifest.permission.ACCESS_FINE_LOCATION,
+                  Manifest.permission.ACCESS_COARSE_LOCATION,
+                  Manifest.permission.RECORD_AUDIO
+              ).apply {
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                      add(Manifest.permission.POST_NOTIFICATIONS)
+                  }
+              }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  tts = TextToSpeech(this, this)
+
+                  val scroll = ScrollView(this).apply {
+                      setBackgroundColor(0xFF0B0F19.toInt())
+                  }
+                  val container = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(48, 48, 48, 48)
+                  }
+
+                  val title = TextView(this).apply {
+                      text = "AutoMaroc Pro • Android Auto Companion"
+                      textSize = 21f
+                      setTextColor(0xFF10B981.toInt())
+                  }
+                  container.addView(title)
+
+                  statusText = TextView(this).apply {
+                      textSize = 14f
+                      setTextColor(0xFFE2E8F0.toInt())
+                      setPadding(0, 16, 0, 24)
+                  }
+                  container.addView(statusText)
+
+                  val grantPermsBtn = Button(this).apply {
+                      text = "Grant All Android Auto & GPS Authorizations"
+                      setBackgroundColor(0xFF059669.toInt())
+                      setTextColor(0xFFFFFFFF.toInt())
+                      setOnClickListener { requestAllAuthorizations() }
+                  }
+                  container.addView(grantPermsBtn)
+
+                  val amountInput = EditText(this).apply {
+                      hint = "Enter Fuel Refill in Dirhams (e.g. 250 MAD)"
+                      setHintTextColor(0xFF94A3B8.toInt())
+                      setTextColor(0xFFFFFFFF.toInt())
+                      inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+                      setText("200")
+                  }
+                  container.addView(amountInput)
+
+                  val priceInput = EditText(this).apply {
+                      hint = "Gasoil Price per Liter in MAD (e.g. 12.65)"
+                      setHintTextColor(0xFF94A3B8.toInt())
+                      setTextColor(0xFFFFFFFF.toInt())
+                      inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+                      setText(FuelExpenseRepository.gasoilPriceMad.toString())
+                  }
+                  container.addView(priceInput)
+
+                  conversionPreviewText = TextView(this).apply {
+                      textSize = 16f
+                      setTextColor(0xFF38BDF8.toInt())
+                      setPadding(0, 16, 0, 16)
+                  }
+                  container.addView(conversionPreviewText)
+
+                  val logRefillBtn = Button(this).apply {
+                      text = "Convert MAD -> Liters & Sync to Android Auto"
+                      setBackgroundColor(0xFF2563EB.toInt())
+                      setTextColor(0xFFFFFFFF.toInt())
+                      setOnClickListener {
+                          val mad = amountInput.text.toString().toDoubleOrNull() ?: 200.0
+                          val price = priceInput.text.toString().toDoubleOrNull() ?: 12.65
+                          FuelExpenseRepository.gasoilPriceMad = price
+                          val entry = FuelExpenseRepository.logQuickRefill(this@MainActivity, mad)
+                          Toast.makeText(
+                              this@MainActivity,
+                              "Logged ${entry.amountMad.toInt()} DH = ${String.format(Locale.US, "%.2f", entry.liters)} L!",
+                              Toast.LENGTH_LONG
+                          ).show()
+                          refreshUi()
+                      }
+                  }
+                  container.addView(logRefillBtn)
+
+                  val aiSpeakBtn = Button(this).apply {
+                      text = "Test AI Road Traffic & Weather Voice Briefing"
+                      setBackgroundColor(0xFF7C3AED.toInt())
+                      setTextColor(0xFFFFFFFF.toInt())
+                      setOnClickListener {
+                          val speech = FuelExpenseRepository.getAiBriefingSpeech()
+                          tts?.speak(speech, TextToSpeech.QUEUE_FLUSH, null, "PHONE_AI")
+                          Toast.makeText(this@MainActivity, speech, Toast.LENGTH_LONG).show()
+                      }
+                  }
+                  container.addView(aiSpeakBtn)
+
+                  historyText = TextView(this).apply {
+                      textSize = 14f
+                      setTextColor(0xFFCBD5E1.toInt())
+                      setPadding(0, 24, 0, 24)
+                  }
+                  container.addView(historyText)
+
+                  scroll.addView(container)
+                  setContentView(scroll)
+
+                  requestAllAuthorizations()
+                  refreshUi()
+              }
+
+              private fun requestAllAuthorizations() {
+                  val missing = requiredPermissions.filter {
+                      ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+                  }
+                  if (missing.isNotEmpty()) {
+                      ActivityCompat.requestPermissions(this, missing.toTypedArray(), 1001)
+                  } else {
+                      fetchLiveGpsPosition()
+                      refreshUi()
+                  }
+              }
+
+              @SuppressLint("MissingPermission")
+              private fun fetchLiveGpsPosition() {
+                  val client = LocationServices.getFusedLocationProviderClient(this)
+                  client.lastLocation.addOnSuccessListener { loc: Location? ->
+                      if (loc != null) {
+                          val speedKmh = (loc.speed * 3.6).toInt()
+                          if (speedKmh > 0) FuelExpenseRepository.currentSpeedKmh = speedKmh
+                          FuelExpenseRepository.currentCity =
+                              String.format(Locale.US, "GPS %.4f, %.4f (Maroc)", loc.latitude, loc.longitude)
+                          refreshUi()
+                      }
+                  }
+              }
+
+              private fun refreshUi() {
+                  val repo = FuelExpenseRepository
+                  val allGranted = requiredPermissions.all {
+                      ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+                  }
+                  statusText.text = buildString {
+                      append("• Android Auto Launcher Service: ACTIVE (IOT / POI / NAVIGATION)\\n")
+                      append("• Permissions Status: ${if (allGranted) "ALL GRANTED" else "TAP BUTTON TO GRANT"}\\n")
+                      append("• Live GPS: ${repo.currentCity} (${repo.currentTempC} C)\\n")
+                      append("• Upcoming Road Alert: ${repo.upcomingRoadEvent}")
+                  }
+
+                  val sampleLiters = repo.convertMadToLiters(200.0)
+                  conversionPreviewText.text = String.format(
+                      Locale.US,
+                      "Current Rate: %s (%s @ %.2f DH/L)\\n200 DH = %.2f Liters (+%d km range)",
+                      repo.selectedStation,
+                      repo.selectedFuelType,
+                      repo.currentPricePerLiter(),
+                      sampleLiters,
+                      repo.estimatedRangeAddedKm(sampleLiters)
+                  )
+
+                  historyText.text = buildString {
+                      append("=== RECENT FUEL LOGS (MAD <-> LITERS) ===\\n")
+                      repo.fuelLogs.forEach {
+                          append("• ${it.timestamp}: ${it.amountMad.toInt()} DH -> ${String.format(Locale.US, "%.2f", it.liters)} L (${it.station} @ ${it.pricePerLiterMad} DH/L)\\n")
+                      }
+                      append("\\n=== RECENT CAR EXPENSES & JAWAZ ===\\n")
+                      repo.expenseLogs.forEach {
+                          append("• ${it.timestamp}: ${it.category} - ${it.amountMad.toInt()} DH (${it.note})\\n")
+                      }
+                  }
+              }
+
+              override fun onRequestPermissionsResult(
+                  requestCode: Int,
+                  permissions: Array<out String>,
+                  grantResults: IntArray
+              ) {
+                  super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+                  fetchLiveGpsPosition()
+                  refreshUi()
+              }
+
+              override fun onInit(status: Int) {
+                  if (status == TextToSpeech.SUCCESS) {
+                      tts?.language = Locale.US
+                  }
+              }
+          }
+          '''
+          }
+
+          import textwrap
+          for path, content in files.items():
+              os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
+              cleaned = textwrap.dedent(content).lstrip()
+              with open(path, "w", encoding="utf-8") as f:
+                  f.write(cleaned)
+          print("All project files generated cleanly!")
+          PYEOF
+
+      - name: Setup Gradle 8.6
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.6'
+
+      - name: Compile Debug APK
+        run: gradle assembleDebug --stacktrace
+
+      - name: Upload Ready-to-Install APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AutoMarocPro-AndroidAuto-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
